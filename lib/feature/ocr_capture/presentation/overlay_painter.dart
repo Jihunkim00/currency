@@ -85,7 +85,7 @@ class OverlayPainter extends CustomPainter {
     final tp = TextPainter(
       text: TextSpan(
         text: s,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: const TextStyle(color: Colors.white, fontSize: 12),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,

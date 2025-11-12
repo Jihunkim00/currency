@@ -5,6 +5,8 @@ abstract class ILocationService {
   Future<String?> getCurrencyByLocation();
 }
 class LocationService implements ILocationService {
+  String? _cachedCurrency;      // ✅ 첫 성공값 캐시
+  bool _attemptedOnce = false;  // ✅ 앱 구동 중 1회만 시도
   @override
   Future<String?> getCurrencyByLocation() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -39,7 +41,9 @@ class LocationService implements ILocationService {
     final iso = placemarks.first.isoCountryCode?.toUpperCase();
     if (iso == null) return null;
 
-    return _countryToCurrency[iso] ?? 'USD';
+    _cachedCurrency = _countryToCurrency[iso] ?? 'USD'; // ✅ 캐시에 저장
+
+    return _cachedCurrency;
   }
 }
 

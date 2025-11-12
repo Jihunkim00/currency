@@ -1,10 +1,10 @@
-name: currency
-description: "A new Flutter project."
+name: Ratelens
+description: "ratelens ocr auto currency calc"
 
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'THJ co.Ltd' # Remove this line if you wish to publish to pub.dev
 
 
-version: 1.0.0+1
+version: 1.0.0+9
 
 environment:
   sdk: ^3.7.2
@@ -30,6 +30,9 @@ dependencies:
   image : ^4.1.7
   geolocator: ^14.0.2
   geocoding: ^4.0.0
+  url_launcher: ^6.3.2
+  package_info_plus: ^8.0.0
+
 
 
 dev_dependencies:
@@ -41,7 +44,7 @@ dev_dependencies:
 
 
 flutter:
-
-
   uses-material-design: true
+  assets:
+    - assets/app_icon.png
 

@@ -6,13 +6,16 @@ import '../data/location_service.dart' show ILocationService;
 
 // 1순위: 통화코드/기호 + 금액
 final moneyRegex = RegExp(
-  r'((USD|AUD|NZD|CAD|EUR|JPY|KRW|GBP|CNY|HKD|SGD)|[€£¥₩$])\s*([0-9]{1,3}(?:[.,\s][0-9]{3})*|[0-9]+)(?:([.,][0-9]{1,2}))?',
+  r'((USD|AUD|NZD|CAD|EUR|JPY|KRW|GBP|CNY|HKD|SGD)|[€£¥₩$￥￦])\s*([0-9]{1,3}(?:[.,\s\u00A0\u202F][0-9]{3})*|[0-9]+)(?:([.,][0-9]{1,2}))?',
+  caseSensitive: false,
 );
 
 // 2순위: 숫자만 (양옆에 통화기호/코드가 없는 경우만)
 final numberOnlyRegex = RegExp(
-  r'(?<![A-Z€£¥₩$])\b([0-9]{1,3}(?:[.,\s][0-9]{3})*|[0-9]+)(?:([.,][0-9]{1,2}))?\b(?!\s*(USD|AUD|NZD|CAD|EUR|JPY|KRW|GBP|CNY|HKD|SGD)|[€£¥₩$])',
+  r'(?<![A-Z€£¥₩$￥￦])\b([0-9]{1,3}(?:[.,\s\u00A0\u202F][0-9]{3})*|[0-9]+)(?:([.,][0-9]{1,2}))?\b(?!\s*(USD|AUD|NZD|CAD|EUR|JPY|KRW|GBP|CNY|HKD|SGD)|[€£¥₩$￥￦])',
+  caseSensitive: false,
 );
+
 
 String? resolveSymbol(String s, String dollarDefault) {
   switch (s) {
@@ -106,7 +109,8 @@ class CaptureNotifier extends StateNotifier<CaptureState> {
     final decPart = (decPartRaw ?? '').replaceAll(RegExp(r'[^0-9]'), '');
     // 천단위 구분(콤마/공백/점)은 제거, 소수점만 '.'로 구성
     final normalized =
-        intPart.replaceAll(RegExp(r'[,\s.]'), '') + (decPart.isNotEmpty ? '.$decPart' : '');
+        intPart.replaceAll(RegExp(r'[,\.\s\u00A0\u202F]'), '') + (decPart.isNotEmpty ? '.$decPart' : '');
+
     return double.tryParse(normalized);
   }
 

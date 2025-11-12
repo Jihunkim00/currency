@@ -1,4 +1,4 @@
-package com.example.currency
+package com.thj.currency
 
 import io.flutter.embedding.android.FlutterActivity
 

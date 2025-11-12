@@ -18,6 +18,9 @@ class LogObserver extends ProviderObserver {
     debugPrint('[Provider] $name updated: $previousValue -> $newValue');
   }
 
+
+
+
   @override
   void providerDidFail(
       ProviderBase provider,
@@ -43,6 +46,8 @@ void main() async {
     FlutterError.dumpErrorToConsole(details);
   };
 
+  _keepMaterialIcons(); // 👈 아이콘 글리프 보존 (한 줄 추가)
+
   runApp(
     ProviderScope(
       observers: [LogObserver()], // ← 여기!
@@ -63,3 +68,12 @@ class AppRoot extends StatelessWidget {
     );
   }
 }
+// 릴리스에서 Material 아이콘 글리프가 트리셰이킹 되는 것을 방지
+// (앱에서 실제로 쓰는 아이콘들을 여기에 추가)
+List<IconData> _keepMaterialIcons() => const [
+  Icons.arrow_back,
+  Icons.arrow_back_ios_new,
+  Icons.close,
+  Icons.settings,
+  // 필요하면 추가: Icons.menu, Icons.chevron_left, Icons.chevron_right, …
+];

@@ -1,3 +1,69 @@
+#key
+/android/key.properties
+
+# FlutterFire
+lib/firebase_options.dart
+# 혹시 하위 패키지 구조를 쓴다면(모노레포 대비)
+**/firebase_options.dart
+
+# --- Flutter / Dart ---
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.melos_tool/
+build/
+coverage/
+**/GeneratedPluginRegistrant.*
+# 앱(repo)에서는 pubspec.lock 커밋 권장 (패키지라면 제외)
+# !pubspec.lock  # <- 앱이면 주석 유지(커밋), 패키지면 주석 해제(무시)
+
+# --- IDE (Android Studio / IntelliJ) ---
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# --- Android ---
+android/.gradle/
+android/local.properties
+android/**/build/
+android/**/captures/
+android/key.properties
+android/app/release/
+android/app/profile/
+android/app/debug/
+android/app/google-services.json
+*.keystore
+*.jks
+
+# --- iOS ---
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/.last_build_id
+ios/Flutter/ephemeral/
+ios/Flutter/App.framework
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Runner/GeneratedPluginRegistrant.*
+ios/Runner/GoogleService-Info.plist
+**/*.xcuserstate
+**/*.xcworkspace
+**/*.xcuserdatad
+
+# --- macOS (Flutter) ---
+macos/Pods/
+macos/Flutter/ephemeral/
+
+# --- Web (Flutter) ---
+.web/
+
+# --- Misc ---
+.DS_Store
+
+
+
 # Miscellaneous
 *.class
 *.log

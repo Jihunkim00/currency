@@ -11,6 +11,8 @@ import 'overlay_painter.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math; // ⬅️ 추가
+import 'dart:io' show Platform;
+
 
 
 
@@ -23,13 +25,20 @@ class CameraPage extends StatefulHookConsumerWidget {
 class _CameraPageState extends ConsumerState<CameraPage> {
   // Portrait: width 그대로(0.40), height 절반(0.22 → 0.11)
   static const double _roiWidthPortrait = 0.40;
-  static const double _roiHeightPortrait = 0.10;
+  static const double _roiHeightPortrait = 0.09;
 
   // Landscape: height 두배(0.09 → 0.18), width 1/3(0.40 → ~0.1333)
   static const double _roiWidthLandscape = 0.30; // 0.40 / 3
   static const double _roiHeightLandscape = 0.18;
 
   bool _isPortrait = true; // build에서 갱신
+
+  // zoom state
+  double _currentZoom = 1.0;
+  double _baseZoom = 1.0;
+  double _minZoom = 1.0;
+  double _maxZoom = 1.0;
+
 
   // 프리뷰에 실제로 보이는 "이미지 내부 영역"을 이미지 좌표계로 계산
   Rect _visibleImageRectInImageSpace(Size imageSize, Size previewSize, int rotationDeg) {
@@ -112,12 +121,24 @@ class _CameraPageState extends ConsumerState<CameraPage> {
         back,
         ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420,
+        imageFormatGroup: Platform.isIOS
+           ? ImageFormatGroup.bgra8888
+           : ImageFormatGroup.yuv420,
       );
 
       await _controller.initialize();
+
+// 🔽 줌 범위 조회 + 초기 줌 설정
+      _minZoom = await _controller.getMinZoomLevel();
+      _maxZoom = await _controller.getMaxZoomLevel();
+      _currentZoom = _minZoom.clamp(_minZoom, _maxZoom);
+      await _controller.setZoomLevel(_currentZoom);
+
+// 이미지 스트림 시작
       await _controller.startImageStream(_onImage);
       if (mounted) setState(() => _initialized = true);
+
+
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -130,6 +151,9 @@ class _CameraPageState extends ConsumerState<CameraPage> {
 
 
   Uint8List _yuv420toNv21(CameraImage image) {
+    if (image.planes.length < 3) {
+      throw UnsupportedError('Expected 3 planes (YUV420) for NV21 conversion');
+    }
     final int width = image.width;
     final int height = image.height;
 
@@ -164,43 +188,117 @@ class _CameraPageState extends ConsumerState<CameraPage> {
     return nv21;
   }
 
+  void _onScaleStart(ScaleStartDetails d) {
+    _baseZoom = _currentZoom;
+  }
+
+  Future<void> _onScaleUpdate(ScaleUpdateDetails d) async {
+    // 두 손가락 이상일 때만 확대/축소 취급 (원하면 조건 제거 가능)
+    if (d.pointerCount < 2) return;
+
+    final next = (_baseZoom * d.scale).clamp(_minZoom, _maxZoom);
+    if ((next - _currentZoom).abs() >= 0.01) {
+      _currentZoom = next;
+      try {
+        await _controller.setZoomLevel(_currentZoom);
+      } catch (_) {
+        // 기기별 일시적 예외는 무시
+      }
+      if (mounted) setState(() {});
+    }
+  }
+
+
   Future<void> _onImage(CameraImage img) async {
     _frame++;
     if (_busy || _frame % _nth != 0) return;
     _busy = true;
 
+    // iOS NV12(2-plane) → NV21로 바꿔주는 초소형 헬퍼
+    Uint8List _nv12ToNv21Bytes(CameraImage i) {
+      final y = i.planes[0].bytes;      // Y
+      final uv = i.planes[1].bytes;     // UV interleaved (CbCr)
+      final vu = Uint8List(uv.length);  // VU interleaved
+      for (int idx = 0; idx + 1 < uv.length; idx += 2) {
+        vu[idx] = uv[idx + 1];     // V
+        vu[idx + 1] = uv[idx];     // U
+      }
+      final out = Uint8List(y.length + vu.length);
+      out.setRange(0, y.length, y);
+      out.setRange(y.length, y.length + vu.length, vu);
+      return out;
+    }
+
     try {
-      final bytes = _yuv420toNv21(img);
       final imageSize = Size(img.width.toDouble(), img.height.toDouble());
+      final rotation = InputImageRotationValue.fromRawValue(
+        _controller.description.sensorOrientation,
+      ) ?? InputImageRotation.rotation0deg;
 
-      final meta = InputImageMetadata(
-        size: imageSize,
-        rotation: InputImageRotationValue.fromRawValue(
-          _controller.description.sensorOrientation,
-        ) ??
-            InputImageRotation.rotation0deg,
-        format: InputImageFormat.nv21,
-        bytesPerRow: img.planes.first.bytesPerRow,
-      );
+      // ★ 플랫폼/포맷 분기: iOS(BGRA or NV12), Android(NV21)
+      late final InputImage inputImage;
 
-      final inputImage = InputImage.fromBytes(bytes: bytes, metadata: meta);
+      if (Platform.isIOS) {
+        if (img.planes.length == 1) {
+          // iOS: BGRA8888 (권장 경로)
+          final plane = img.planes.first;
+          inputImage = InputImage.fromBytes(
+            bytes: plane.bytes,
+            metadata: InputImageMetadata(
+              size: imageSize,
+              rotation: rotation,
+              format: InputImageFormat.bgra8888,
+              bytesPerRow: plane.bytesPerRow,
+            ),
+          );
+        } else if (img.planes.length == 2) {
+          // iOS: NV12 (Y + UV) → NV21로 스왑해서 전달
+          final bytes = _nv12ToNv21Bytes(img);
+          inputImage = InputImage.fromBytes(
+            bytes: bytes,
+            metadata: InputImageMetadata(
+              size: imageSize,
+              rotation: rotation,
+              format: InputImageFormat.nv21,
+              bytesPerRow: img.planes.first.bytesPerRow, // Y plane stride
+            ),
+          );
+        } else {
+          // 예상치 못한 포맷은 스킵 (크래시 방지)
+          _busy = false;
+          return;
+        }
+      } else {
+        // Android: YUV420 → NV21 유지
+        final bytes = _yuv420toNv21(img);
+        inputImage = InputImage.fromBytes(
+          bytes: bytes,
+          metadata: InputImageMetadata(
+            size: imageSize,
+            rotation: rotation,
+            format: InputImageFormat.nv21,
+            bytesPerRow: img.planes.first.bytesPerRow,
+          ),
+        );
+      }
+
       final boxes = await _ocr.recognizeFromInputImage(inputImage);
 
-// ✅ 프리뷰 중앙 ROI를 '이미지 좌표'로 환산해서 필터링
+      // ✅ 프리뷰 중앙 ROI 필터는 그대로 유지
       List<OcrBox> filtered = boxes;
       if (_lastPreviewSize != null) {
         final roiImage = _imageRoiFromPreview(imageSize, _lastPreviewSize!);
         filtered = boxes.where((c) {
-          final r = c.bbox; // OcrBox.bbox는 이미지 좌표
+          final r = c.bbox; // 이미지 좌표
           return roiImage.overlaps(r) || roiImage.contains(r.center);
         }).toList();
       }
 
-
       if (filtered.isNotEmpty) {
         final settingsAV = ref.read(settingsProvider);
-        final dollarDefault = settingsAV.asData?.value.dollarDefault ?? 'USD';
-        final autoInfer = settingsAV.asData?.value.autoInferSourceCurrency ?? true;
+        final s = settingsAV.asData?.value;
+        final dollarDefault = s?.dollarDefault ?? 'USD';
+        final autoInfer = s?.autoInferSourceCurrency ?? true;
 
         await ref.read(captureProvider.notifier).updateWithLocation(
           imageSize,
@@ -208,7 +306,6 @@ class _CameraPageState extends ConsumerState<CameraPage> {
           dollarDefault,
           autoInfer,
         );
-
 
         await Future.delayed(const Duration(seconds: 1));
       }
@@ -218,6 +315,7 @@ class _CameraPageState extends ConsumerState<CameraPage> {
       _busy = false;
     }
   }
+
 
 
   @override
@@ -244,25 +342,23 @@ class _CameraPageState extends ConsumerState<CameraPage> {
     final showSidePanel = screenW >= 480;
 
     return Scaffold(
-      body: LayoutBuilder(
-        builder: (context, cons) {
-          final previewSize = Size(cons.maxWidth - (showSidePanel ? 220.0 : 0.0), cons.maxHeight);
-          _lastPreviewSize = previewSize; // ⬅️ 추가
-          return Stack(
-            children: [
-                 Positioned(
-                     left: 0,
-                     top: 0,
-                     bottom: 0,
-                     right: showSidePanel ? 220 : 0, // ✅ 사이드패널 폭 제외
-                child: GestureDetector(
+      body: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ← 왼쪽: 카메라 프리뷰 영역
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, cons) {
+                final previewSize = Size(cons.maxWidth, cons.maxHeight);
+                _lastPreviewSize = previewSize;
+
+                return GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  onScaleStart: _onScaleStart,
+                  onScaleUpdate: _onScaleUpdate,
                   onTapUp: (d) {
-                     final roiPreview = _previewRoi(previewSize);
-                     if (roiPreview.contains(d.localPosition)) {
-                       // 중앙 픽 패널이 처리하므로 여기서는 무시
-                       return;
-                     }
+                    final roiPreview = _previewRoi(previewSize);
+                    if (roiPreview.contains(d.localPosition)) return;
 
                     final tapped = _hitTest(
                       d.localPosition,
@@ -280,66 +376,66 @@ class _CameraPageState extends ConsumerState<CameraPage> {
                       );
                     }
                   },
-
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
+                      // 카메라 프리뷰
                       CameraPreview(_controller),
-                      // ✅ 중앙 ROI 마스크(투명 창 + 반투명 배경 + 흰 테두리)
+
+                      // 중앙 ROI 마스크
                       CustomPaint(
-                        painter: _RoiMaskPainter(
-                          roi: _previewRoi(previewSize),
+                        painter: _RoiMaskPainter(roi: _previewRoi(previewSize)),
+                      ),
+
+                      // 중앙 픽 패널(칩들)
+                      Positioned.fromRect(
+                        rect: _previewRoi(previewSize),
+                        child: _CenterPickPanel(candidates: cap.candidates),
+                      ),
+
+                      // 우상단: 설정 버튼 (오프셋에 220 더할 필요 없음)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: SafeArea(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.35),
+                              shape: BoxShape.circle,
+                            ),
+                            child: IconButton(
+                              tooltip: 'Settings',
+                              onPressed: () => context.push('/settings'),
+                              icon: const Icon(Icons.settings, color: Colors.white),
+                            ),
+                          ),
                         ),
                       ),
-                       // ✅ 중앙 고정 선택 패널 (반투명, 큼직, 클릭 쉬움)
-                       Positioned.fromRect(
-                             rect: _previewRoi(previewSize),
-                         child: _CenterPickPanel(candidates: cap.candidates),
-                     ),
+
+                      // 우상단(설정 아래): 미니 합계
+                      Positioned(
+                        right: 8,
+                        top: MediaQuery.of(context).padding.top + 8.0 + 48.0 + (_isPortrait ? 10.0 : 20.0),
+                        child: const _MiniSum(),
+                      ),
                     ],
                   ),
-                ),
-              ),
-              if (showSidePanel)
-                const Positioned(
-                  right: 0,
-                  top: 0,
-                  bottom: 0,
-                  width: 220,
-                  child: SideSumPanel(),
-                )
-              else
-                Positioned(
-                  // 설정 버튼과 같은 우측 정렬 (사이드패널 있으면 +220 안쪽)
-                  right: showSidePanel ? 220.0 + 8.0 : 8.0,
-                  // 상단 안전영역 + (설정 버튼 여백 8) + (설정 버튼 대략 48) + 추가 여백(세로:8, 가로:20)
-                  top: MediaQuery.of(context).padding.top + 8.0 + 48.0 + (_isPortrait ? 10.0 : 20.0),
-                  child: const _MiniSum(),
-                ),
-             // ✅ 프리뷰 위 우상단 오버레이 설정 버튼
-             Positioned(
-               top: 8,
-               right: showSidePanel ? 220.0 + 8.0 : 8.0,
-               child: SafeArea(
-                 child: Container(
-                   decoration: BoxDecoration(
-                     color: Colors.black.withOpacity(0.35),
-                     shape: BoxShape.circle,
-                   ),
-                   child: IconButton(
-                     tooltip: 'Settings',
-                     onPressed: () => context.push('/settings'),
-                     icon: const Icon(Icons.settings, color: Colors.white),
-                   ),
-                 ),
-               ),
-             ),
-            ],
-          );
-        },
+                );
+              },
+            ),
+          ),
+
+          // → 오른쪽: 사이드 합계/브레이크다운 패널
+          if (showSidePanel)
+            SizedBox(
+              width: 220, // 좁으면 180이나 160으로 줄여도 OK
+              child: SideSumPanel(),
+            ),
+        ],
       ),
     );
   }
+
 
   /// ✅ OverlayPainter와 동일한 매핑 로직을 사용
   MoneyCandidate? _hitTest(
@@ -401,52 +497,83 @@ class _MiniSum extends HookConsumerWidget {
   }
 }
 
-class SideSumPanel extends HookConsumerWidget {
-  const SideSumPanel({super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final calc = ref.watch(calcProvider);
-    final rates = ref.watch(ratesProvider).asData?.value;
-    final settings = ref.watch(settingsProvider).asData?.value;
-    final display = settings?.displayCurrency ?? 'KRW';
+ class SideSumPanel extends HookConsumerWidget {
+@override
+Widget build(BuildContext context, WidgetRef ref) {
+final calc = ref.watch(calcProvider);
+final rates = ref.watch(ratesProvider).asData?.value;
+final settings = ref.watch(settingsProvider).asData?.value;
+final display = settings?.displayCurrency ?? 'KRW';
 
-    double sum = 0;
-    if (rates != null) {
-      for (final m in calc.selected) {
-        final v = rates.convert(m.sourceCurrency, display, m.amount);
-        if (v != null) sum += v;
-      }
-    }
+double sum = 0;
+if (rates != null) {
+for (final m in calc.selected) {
+final v = rates.convert(m.sourceCurrency, display, m.amount);
+if (v != null) sum += v;
+                   }
+     }
 
-    return Container(
-      color: Colors.black.withOpacity(.45),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '합계 ($display)',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+return Container(
+width: double.infinity,
+padding: const EdgeInsets.all(12),
+decoration: BoxDecoration(
+color: Colors.black.withOpacity(.35),
+borderRadius: BorderRadius.circular(12),
+),
+child: Column(
+crossAxisAlignment: CrossAxisAlignment.start,
+children: [
+Text('합계 ($display)', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+const SizedBox(height: 8),
+Text('$display ${sum.toStringAsFixed(2)}', style: const TextStyle(color: Colors.white, fontSize: 22)),
+
           const SizedBox(height: 8),
-          Text(
-            '$display ${sum.toStringAsFixed(2)}',
-            style: const TextStyle(color: Colors.white, fontSize: 22),
+          const Divider(height: 1, thickness: 0.5, color: Colors.white24),
+          // ▼ 선택된 항목 목록 (환산 금액 함께 표시)
+          Expanded(
+            child: rates == null
+                ? const SizedBox.shrink()
+                : ListView.separated(
+                    itemCount: calc.selected.length,
+                    separatorBuilder: (_, __) => const Divider(height: 8, thickness: 0.5, color: Colors.white10),
+                    itemBuilder: (context, i) {
+                      final m = calc.selected[i];
+                      final converted = rates.convert(m.sourceCurrency, display, m.amount);
+                      final convertedText = converted == null
+                          ? '-'
+                          : '$display ${converted.toStringAsFixed(2)}';
+                      return Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // 원화/외화 원본 표시
+                          Expanded(
+                            child: Text(
+                              '${m.sourceCurrency} ${m.amount.toStringAsFixed(2)}',
+                              style: const TextStyle(color: Colors.white),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // 디스플레이 통화로 환산 금액
+                          Text(
+                            convertedText,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
           ),
-          const Spacer(),
           ElevatedButton(
-            onPressed: () => ref.read(calcProvider.notifier).clear(),
-            child: const Text('초기화'),
-          ),
-        ],
-      ),
-    );
-  }
+             onPressed: () => ref.read(calcProvider.notifier).clear(),
+           child: const Text('초기화'),
+                          ),
+                    ],
+              ),
+           );
 }
+}
+
 
 class _RoiMaskPainter extends CustomPainter {
   final Rect roi;
@@ -489,7 +616,7 @@ class _CenterPickPanel extends HookConsumerWidget {
     if (candidates.isEmpty) return const SizedBox.shrink();
 
     final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
-    final fontSize = isPortrait ? 20.0 : 16.0; // 세로는 조금 크게, 가로는 살짝 작게
+    final fontSize = isPortrait ? 18.0 : 14.0; // 세로는 조금 크게, 가로는 살짝 작게
     final showCount = isPortrait ? 4 : 3;      // 너무 많이 띄워서 가리는 것 방지
 
     // 크거나 유력한 후보 위주로 정렬
@@ -567,7 +694,7 @@ class _PickChip extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.receipt_long, color: Colors.white70, size: 18),
+                    const Icon(Icons.receipt_long, color: Colors.white70, size: 16),
                     const SizedBox(width: 8),
                     Text(
                       label,
