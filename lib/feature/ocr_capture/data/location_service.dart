@@ -61,4 +61,5 @@ const Map<String, String> _countryToCurrency = {
   'AU': 'AUD',
   'CA': 'CAD',
   'NZ': 'NZD',
+  'SG': 'SGD',
 };
