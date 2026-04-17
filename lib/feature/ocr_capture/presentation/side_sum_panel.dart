@@ -22,7 +22,7 @@ class SideSumPanel extends ConsumerStatefulWidget {
 
 class _SideSumPanelState extends ConsumerState<SideSumPanel> {
   MoneyCandidate? _undoItem;
-  int? _undoIndex;
+
 
   @override
   Widget build(BuildContext context) {
@@ -102,7 +102,7 @@ class _SideSumPanelState extends ConsumerState<SideSumPanel> {
                             onPressed: () {
                               HapticFeedback.selectionClick();
                               _undoItem = item;
-                              _undoIndex = index;
+
                               ref.read(calcProvider.notifier).removeAt(index);
                               _showUndo(context);
                             },
