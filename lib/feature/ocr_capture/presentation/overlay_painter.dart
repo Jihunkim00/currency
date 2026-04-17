@@ -1,77 +1,62 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../domain/entities.dart';
+import 'camera_overlay_mapper.dart';
 
 class OverlayPainter extends CustomPainter {
-  final Size imageSize;
-  final Size previewSize;
+  final CameraOverlayMapper mapper;
   final List<MoneyCandidate> candidates;
-  final int rotation;
 
   OverlayPainter({
-    required this.imageSize,
-    required this.previewSize,
+    required this.mapper,
     required this.candidates,
-    required this.rotation,
   });
-
-  Rect mapRect(Rect r, Size imageSize, Size previewSize, int rotation) {
-    if (imageSize.width == 0 || imageSize.height == 0) return Rect.zero;
-
-    final sx = previewSize.width / imageSize.height;
-    final sy = previewSize.height / imageSize.width;
-
-    if (rotation == 90) {
-      return Rect.fromLTWH(
-        r.top * sx,
-        (imageSize.width - r.right) * sy,
-        r.height * sx,
-        r.width * sy,
-      );
-    } else if (rotation == 270) {
-      return Rect.fromLTWH(
-        (imageSize.height - r.bottom) * sx,
-        r.left * sy,
-        r.height * sx,
-        r.width * sy,
-      );
-    }
-
-    final sx0 = previewSize.width / imageSize.width;
-    final sy0 = previewSize.height / imageSize.height;
-    return Rect.fromLTWH(r.left * sx0, r.top * sy0, r.width * sx0, r.height * sy0);
-  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (imageSize.width == 0 || imageSize.height == 0) return;
+    final previewRect = mapper.getDisplayedPreviewRect();
+    if (previewRect.isEmpty) return;
 
-    for (final m in candidates) {
-      final mapped = mapRect(m.box.bbox, imageSize, previewSize, rotation);
-      final color = m.inferredCurrency ? Colors.orangeAccent : Colors.lightGreenAccent;
-      final rectPaint = Paint()
+    final ranked = [...candidates]..sort((a, b) => b.score.compareTo(a.score));
+    final labelCount = math.min(3, ranked.length);
+
+    for (var i = 0; i < ranked.length; i++) {
+      final candidate = ranked[i];
+      final rect = mapper.mapImageRectToPreview(candidate.box.bbox);
+      if (rect.width < 3 || rect.height < 3) continue;
+      if (!rect.overlaps(Rect.fromLTWH(0, 0, size.width, size.height))) continue;
+
+      final isPrimary = i < 2 && !candidate.inferredCurrency;
+      final borderColor = isPrimary ? const Color(0xFF57D9A3) : const Color(0x99A8B2C1);
+      final paint = Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.4
-        ..color = color;
-      final labelBg = Paint()..color = Colors.black.withOpacity(.72);
+        ..strokeWidth = isPrimary ? 2.0 : 1.2
+        ..color = borderColor;
 
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(mapped, const Radius.circular(8)),
-        rectPaint,
-      );
+      canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(6)), paint);
 
-      final text = '${m.sourceCurrency} ${m.amount.toStringAsFixed(2)}';
-      final tp = _tp(text, color);
-      const padH = 7.0;
-      const padV = 4.0;
-      final rect = Rect.fromLTWH(
-        mapped.left,
-        (mapped.top - tp.height - padV * 2 - 4).clamp(0, size.height - tp.height - (padV * 2)),
-        tp.width + padH * 2,
-        tp.height + padV * 2,
-      );
-      canvas.drawRRect(RRect.fromRectAndRadius(rect, const Radius.circular(7)), labelBg);
-      tp.paint(canvas, Offset(rect.left + padH, rect.top + padV));
+      final shouldDrawLabel = i < labelCount && (candidate.score >= 0.75 || isPrimary);
+      if (!shouldDrawLabel) continue;
+
+      final labelText = '${candidate.sourceCurrency} ${candidate.amount.toStringAsFixed(2)}';
+      final tp = _tp(labelText, isPrimary ? Colors.white : const Color(0xFFD8DEE8));
+      const padH = 6.0;
+      const padV = 3.0;
+      final labelWidth = tp.width + padH * 2;
+      final labelHeight = tp.height + padV * 2;
+      final preferredTop = rect.top - labelHeight - 4;
+      final labelLeft = rect.left.clamp(2.0, size.width - labelWidth - 2.0);
+      final labelTop = preferredTop < 0
+          ? (rect.bottom + 4).clamp(2.0, size.height - labelHeight - 2.0)
+          : preferredTop;
+      final bgRect = Rect.fromLTWH(labelLeft, labelTop, labelWidth, labelHeight);
+      final labelBg = Paint()
+        ..color = isPrimary ? const Color(0xCC0F1720) : const Color(0xAA0F1720)
+        ..style = PaintingStyle.fill;
+      canvas.drawRRect(RRect.fromRectAndRadius(bgRect, const Radius.circular(6)), labelBg);
+      tp.paint(canvas, Offset(bgRect.left + padH, bgRect.top + padV));
     }
   }
 
@@ -79,7 +64,7 @@ class OverlayPainter extends CustomPainter {
     final tp = TextPainter(
       text: TextSpan(
         text: s,
-        style: TextStyle(color: c, fontSize: 13, fontWeight: FontWeight.w700),
+        style: TextStyle(color: c, fontSize: 11.5, fontWeight: FontWeight.w600),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
@@ -91,9 +76,6 @@ class OverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant OverlayPainter old) {
-    return old.candidates != candidates ||
-        old.imageSize != imageSize ||
-        old.previewSize != previewSize ||
-        old.rotation != rotation;
+    return old.candidates != candidates || old.mapper != mapper;
   }
 }

@@ -14,6 +14,7 @@ import '../../../router/app_router.dart';
 import '../../settings/domain/entities.dart';
 import '../data/ocr_service.dart';
 import '../domain/entities.dart';
+import 'camera_overlay_mapper.dart';
 import 'overlay_painter.dart';
 import 'side_sum_panel.dart';
 
@@ -31,7 +32,7 @@ class _CameraPageState extends ConsumerState<CameraPage> {
   String? _cameraError;
   DateTime _lastOcrAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _ocrInFlight = false;
-  Size? _previewSize;
+
 
   static const _ocrMinInterval = Duration(milliseconds: 220);
 
@@ -204,15 +205,24 @@ class _CameraPageState extends ConsumerState<CameraPage> {
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              _previewSize = Size(constraints.maxWidth, constraints.maxHeight);
+              final viewportSize = Size(constraints.maxWidth, constraints.maxHeight);
+              final raw = controller.value.previewSize;
+              final previewRenderSize = raw == null ? null : Size(raw.height, raw.width);
+
+              final mapper = CameraOverlayMapper(
+                imageSize: capture.imageSize,
+                viewportSize: viewportSize,
+                sensorOrientation: controller.description.sensorOrientation,
+                lensDirection: controller.description.lensDirection,
+                previewSourceSize: previewRenderSize,
+              );
+
               return GestureDetector(
                 onTapUp: (details) {
                   final tapped = _hitTest(
                     details.localPosition,
-                    capture.imageSize,
-                    _previewSize!,
                     capture.candidates,
-                    controller.description.sensorOrientation,
+                    mapper,
                   );
                   if (tapped == null) return;
                   HapticFeedback.selectionClick();
@@ -221,16 +231,13 @@ class _CameraPageState extends ConsumerState<CameraPage> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    CameraPreview(controller),
-                    if (_previewSize != null)
-                      CustomPaint(
-                        painter: OverlayPainter(
-                          imageSize: capture.imageSize,
-                          previewSize: _previewSize!,
-                          candidates: capture.candidates,
-                          rotation: controller.description.sensorOrientation,
-                        ),
+                    _PreviewSurface(controller: controller),
+                    CustomPaint(
+                      painter: OverlayPainter(
+                        mapper: mapper,
+                        candidates: capture.candidates,
                       ),
+                    ),
                   ],
                 ),
               );
@@ -270,26 +277,71 @@ class _CameraPageState extends ConsumerState<CameraPage> {
 
   MoneyCandidate? _hitTest(
       Offset tap,
-      Size imageSize,
-      Size previewSize,
       List<MoneyCandidate> candidates,
-      int rotation,
+      CameraOverlayMapper mapper,
       ) {
-    if (imageSize.width == 0 || imageSize.height == 0) return null;
-
-    final mapper = OverlayPainter(
-      imageSize: imageSize,
-      previewSize: previewSize,
-      candidates: const [],
-      rotation: rotation,
-    );
-
+    if (candidates.isEmpty) return null;
+    final hits = <_HitCandidate>[];
     for (final candidate in candidates) {
-      final rect = mapper.mapRect(candidate.box.bbox, imageSize, previewSize, rotation);
-      if (rect.inflate(8).contains(tap)) return candidate;
+      final rect = mapper.mapImageRectToPreview(candidate.box.bbox);
+      if (rect.isEmpty) continue;
+      final expanded = rect.inflate(10);
+      if (!expanded.contains(tap)) continue;
+      hits.add(_HitCandidate(candidate, rect));
     }
-    return null;
+    if (hits.isEmpty) return null;
+
+    hits.sort((a, b) {
+      final aArea = a.rect.width * a.rect.height;
+      final bArea = b.rect.width * b.rect.height;
+
+      final byArea = aArea.compareTo(bArea);
+      if (byArea != 0) return byArea;
+
+      final byScore = b.candidate.score.compareTo(a.candidate.score);
+      if (byScore != 0) return byScore;
+
+      return (a.candidate.inferredCurrency ? 1 : 0)
+          .compareTo(b.candidate.inferredCurrency ? 1 : 0);
+    });
+
+    return hits.first.candidate;
   }
+}
+
+class _PreviewSurface extends StatelessWidget {
+  const _PreviewSurface({required this.controller});
+
+  final CameraController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = controller.value.previewSize;
+    if (size == null) return CameraPreview(controller);
+
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.center,
+        maxWidth: double.infinity,
+        maxHeight: double.infinity,
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: size.height,
+            height: size.width,
+            child: CameraPreview(controller),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HitCandidate {
+  const _HitCandidate(this.candidate, this.rect);
+
+  final MoneyCandidate candidate;
+  final Rect rect;
 }
 
 class _StatusCard extends StatelessWidget {
@@ -312,21 +364,22 @@ class _StatusCard extends StatelessWidget {
     );
 
     return Card(
-      color: Colors.black.withOpacity(0.55),
+      elevation: 0,
+      color: Colors.black.withOpacity(0.33),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               '1) Point camera  2) Tap detected amount  3) Review total',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white70),
             ),
-            const SizedBox(height: 6),
-            Text(isScanning ? 'Scanning…' : 'Waiting for next frame', style: const TextStyle(color: Colors.white70)),
-            Text(rateStatus, style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 4),
+            Text(isScanning ? 'Scanning…' : 'Waiting for next frame', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+            Text(rateStatus, style: const TextStyle(color: Colors.white60, fontSize: 12)),
             if (warning != null)
-              Text(warning!, style: const TextStyle(color: Colors.amberAccent)),
+              Text(warning!, style: const TextStyle(color: Colors.amberAccent, fontSize: 12)),
           ],
         ),
       ),
