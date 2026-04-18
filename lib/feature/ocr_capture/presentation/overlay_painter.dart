@@ -8,10 +8,16 @@ import 'camera_overlay_mapper.dart';
 class OverlayPainter extends CustomPainter {
   final CameraOverlayMapper mapper;
   final List<MoneyCandidate> candidates;
+  final double labelOffsetX;
+  final double labelOffsetY;
+  final double labelScale;
 
   OverlayPainter({
     required this.mapper,
     required this.candidates,
+    this.labelOffsetX = 0,
+    this.labelOffsetY = 0,
+    this.labelScale = 1.0,
   });
 
   @override
@@ -41,16 +47,23 @@ class OverlayPainter extends CustomPainter {
       if (!shouldDrawLabel) continue;
 
       final labelText = '${candidate.sourceCurrency} ${candidate.amount.toStringAsFixed(2)}';
-      final tp = _tp(labelText, isPrimary ? Colors.white : const Color(0xFFD8DEE8));
-      const padH = 6.0;
-      const padV = 3.0;
+      final safeLabelScale = labelScale.clamp(0.5, 2.0) as double;
+      final tp = _tp(
+        labelText,
+        isPrimary ? Colors.white : const Color(0xFFD8DEE8),
+        safeLabelScale,
+      );
+      final padH = 6.0 * safeLabelScale;
+      final padV = 3.0 * safeLabelScale;
       final labelWidth = tp.width + padH * 2;
       final labelHeight = tp.height + padV * 2;
       final preferredTop = rect.top - labelHeight - 4;
-      final labelLeft = rect.left.clamp(2.0, size.width - labelWidth - 2.0);
-      final labelTop = preferredTop < 0
+      final anchorLeft = rect.left.clamp(2.0, size.width - labelWidth - 2.0);
+      final anchorTop = preferredTop < 0
           ? (rect.bottom + 4).clamp(2.0, size.height - labelHeight - 2.0)
           : preferredTop;
+      final labelLeft = (anchorLeft + labelOffsetX).clamp(2.0, size.width - labelWidth - 2.0);
+      final labelTop = (anchorTop + labelOffsetY).clamp(2.0, size.height - labelHeight - 2.0);
       final bgRect = Rect.fromLTWH(labelLeft, labelTop, labelWidth, labelHeight);
       final labelBg = Paint()
         ..color = isPrimary ? const Color(0xCC0F1720) : const Color(0xAA0F1720)
@@ -60,11 +73,15 @@ class OverlayPainter extends CustomPainter {
     }
   }
 
-  TextPainter _tp(String s, Color c) {
+  TextPainter _tp(String s, Color c, double labelScale) {
     final tp = TextPainter(
       text: TextSpan(
         text: s,
-        style: TextStyle(color: c, fontSize: 11.5, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          color: c,
+          fontSize: 11.5 * labelScale,
+          fontWeight: FontWeight.w600,
+        ),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
@@ -76,6 +93,10 @@ class OverlayPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant OverlayPainter old) {
-    return old.candidates != candidates || old.mapper != mapper;
+    return old.candidates != candidates ||
+        old.mapper != mapper ||
+        old.labelOffsetX != labelOffsetX ||
+        old.labelOffsetY != labelOffsetY ||
+        old.labelScale != labelScale;
   }
 }

@@ -12,6 +12,13 @@ class CameraOverlayMapper {
     required this.lensDirection,
     this.fit = BoxFit.cover,
     this.previewSourceSize,
+    this.isPortrait = false,
+    this.overlayOffsetX = 0,
+    this.overlayOffsetY = 0,
+    this.overlayScaleX = 1.0,
+    this.overlayScaleY = 1.0,
+    this.portraitPreviewScaleX = 1.0,
+    this.portraitPreviewScaleY = 1.0,
   });
 
   final Size imageSize;
@@ -20,6 +27,13 @@ class CameraOverlayMapper {
   final CameraLensDirection lensDirection;
   final BoxFit fit;
   final Size? previewSourceSize;
+  final bool isPortrait;
+  final double overlayOffsetX;
+  final double overlayOffsetY;
+  final double overlayScaleX;
+  final double overlayScaleY;
+  final double portraitPreviewScaleX;
+  final double portraitPreviewScaleY;
 
   bool get _hasValidSizes =>
       imageSize.width > 0 && imageSize.height > 0 && viewportSize.width > 0 && viewportSize.height > 0;
@@ -39,7 +53,8 @@ class CameraOverlayMapper {
     final fitted = applyBoxFit(fit, source, viewportSize);
     final dx = (viewportSize.width - fitted.destination.width) / 2;
     final dy = (viewportSize.height - fitted.destination.height) / 2;
-    return Rect.fromLTWH(dx, dy, fitted.destination.width, fitted.destination.height);
+    final rect = Rect.fromLTWH(dx, dy, fitted.destination.width, fitted.destination.height);
+    return _applyPortraitPreviewScale(rect);
   }
 
   Rect mapImageRectToPreview(Rect imageRect) {
@@ -69,10 +84,11 @@ class CameraOverlayMapper {
     final previewRect = getDisplayedPreviewRect();
     final mirroredX = _shouldMirror ? (1.0 - nx) : nx;
 
-    return Offset(
+    final pointOnPreview = Offset(
       previewRect.left + (previewRect.width * mirroredX),
       previewRect.top + (previewRect.height * ny),
     );
+    return _applyOverlayCalibrationToPoint(pointOnPreview, previewRect.center);
   }
 
   Offset _rotatePoint(Offset p) {
@@ -107,4 +123,24 @@ class CameraOverlayMapper {
   }
 
   bool get _shouldMirror => lensDirection == CameraLensDirection.front;
+
+  Rect _applyPortraitPreviewScale(Rect base) {
+    if (!isPortrait) return base;
+    final scaledW = base.width * portraitPreviewScaleX;
+    final scaledH = base.height * portraitPreviewScaleY;
+    return Rect.fromCenter(
+      center: base.center,
+      width: scaledW,
+      height: scaledH,
+    );
+  }
+
+  Offset _applyOverlayCalibrationToPoint(Offset p, Offset pivot) {
+    final dx = (p.dx - pivot.dx) * overlayScaleX;
+    final dy = (p.dy - pivot.dy) * overlayScaleY;
+    return Offset(
+      pivot.dx + dx + overlayOffsetX,
+      pivot.dy + dy + overlayOffsetY,
+    );
+  }
 }

@@ -115,6 +115,14 @@ class SettingsPage extends HookConsumerWidget {
                   },
                 ),
               ),
+              SwitchListTile(
+                title: const Text('Calibration debug mode (temporary)'),
+                subtitle: const Text('카메라 화면의 임시 보정 패널 표시'),
+                value: s.calibrationModeEnabled,
+                onChanged: (v) {
+                  ref.read(settingsProvider.notifier).setCalibrationModeEnabled(v);
+                },
+              ),
               const SizedBox(height: 12),
             ],
           );

@@ -47,4 +47,28 @@ class SettingsNotifier extends StateNotifier<AsyncValue<AppSettings>> {
     state = AsyncValue.data(next);
     await ds.saveAutoInferSourceCurrency(value);
   }
+
+  Future<void> setCalibrationModeEnabled(bool enabled) async {
+    final cur = state.value ?? const AppSettings();
+    final next = cur.copyWith(calibrationModeEnabled: enabled);
+    state = AsyncValue.data(next);
+    await ds.save(next);
+  }
+
+  Future<void> resetCalibration() async {
+    final cur = state.value ?? const AppSettings();
+    final next = cur.copyWith(
+      overlayOffsetX: 0,
+      overlayOffsetY: 0,
+      overlayScaleX: 1.0,
+      overlayScaleY: 1.0,
+      labelOffsetX: 0,
+      labelOffsetY: 0,
+      labelScale: 1.0,
+      portraitPreviewScaleX: 1.0,
+      portraitPreviewScaleY: 1.0,
+    );
+    state = AsyncValue.data(next);
+    await ds.save(next);
+  }
 }
